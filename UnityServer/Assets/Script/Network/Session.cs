@@ -1,5 +1,3 @@
-using System;
-using System.Net;
 using System.Net.Sockets;
 
 public class Session
@@ -8,5 +6,4 @@ public class Session
     public string Id { get; set; }
     public string IPAddress { get; set; }
     public RingBuffer RecvBuffer { get; set; } = new RingBuffer();
-    public RingBuffer SendBuffer { get; set; } = new RingBuffer();
 }

@@ -1,26 +1,29 @@
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using Newtonsoft.Json;
 using UnityEngine;
+using UnityEngine.Events;
+
+
 public class Server : MonoBehaviour
 {
     public static Server Instance { get; private set; }
 
     [SerializeField] private int port;
-    [SerializeField] private ushort maxConnection;
-    [SerializeField] private int receiveBufferSize;
+    [SerializeField] private ushort maxConnection = ushort.MaxValue;
 
     private Socket listenSocket;
     private MemoryPool<SocketAsyncEventArgs> readWritePool;
     private int numConnections;
 
     private ConcurrentDictionary<string, Session> sessions;
+
+    public UnityEvent<object> OnReceive { get; private set; } = new UnityEvent<object> { };
 
     private void Awake()
     {
@@ -44,7 +47,6 @@ public class Server : MonoBehaviour
         {
             readWriteEventArg = new SocketAsyncEventArgs();
             readWriteEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
-            readWriteEventArg.UserToken = new Session();
 
             readWritePool.Free(readWriteEventArg);
         }
@@ -82,16 +84,18 @@ public class Server : MonoBehaviour
 
         SocketAsyncEventArgs readEventArgs = readWritePool.Allocate();
 
-        Session session = (Session)readEventArgs.UserToken;
+        Session session = new Session();
         session.Socket = e.AcceptSocket;
         session.Id = Guid.NewGuid().ToString();
         session.IPAddress = ((IPEndPoint)e.RemoteEndPoint).Address.ToString();
 
         sessions.TryAdd(session.Id, session);
 
+        readEventArgs.UserToken = session;
+
         readEventArgs.SetBuffer(session.RecvBuffer.Buffer, session.RecvBuffer.Rear, session.RecvBuffer.WritableLength);
 
-        Logger.Log(LogLevel.System, $"[{session.Id}] is connected. Number of currently connected clients : {numConnections}");
+        Logger.Log(LogLevel.System, $"[{session.IPAddress}] is connected. Number of currently connected clients : {numConnections}");
 
 
         bool pending = e.AcceptSocket.ReceiveAsync(readEventArgs);
@@ -105,6 +109,7 @@ public class Server : MonoBehaviour
 
     private void IO_Completed(object sender, SocketAsyncEventArgs e)
     {
+        Session session = (Session)e.UserToken;
         switch (e.LastOperation)
         {
             case SocketAsyncOperation.Receive:
@@ -114,7 +119,9 @@ public class Server : MonoBehaviour
                 ProcessSend(e);
                 break;
             default:
-                throw new ArgumentException("The last operation completed on the socket was not a receive or send");
+                Disconnect(session.Id);
+                Logger.Log(LogLevel.Error, $"Invalid Packet. {session.IPAddress}");
+                break;
         }
     }
 
@@ -150,12 +157,16 @@ public class Server : MonoBehaviour
     {
         NetworkHeader header = new NetworkHeader();
         int headerLength = Marshal.SizeOf(header);
+        int packetLength;
 
         while (true)
         {
-            if (session.RecvBuffer.Length < headerLength) break;
+            if (session.RecvBuffer.Length < headerLength)
+            {
+                break;
+            }
 
-            session.RecvBuffer.Peek(ref header);
+            session.RecvBuffer.Peek<NetworkHeader>(ref header);
             if (header.magicNumber != Protocol.MagicNumber)
             {
                 Logger.Log(LogLevel.Error, $"Magic Code does not match. Id: {session.Id}");
@@ -163,17 +174,68 @@ public class Server : MonoBehaviour
                 break;
             }
 
-            if (session.RecvBuffer.Length < headerLength + header.messageLength) break;
+            packetLength = headerLength + header.messageLength;
 
+            if (session.RecvBuffer.Length < packetLength)
+            {
+                break;
+            }
             // 여기서 패킷처리
+            session.RecvBuffer.MoveFront(headerLength);
 
-            break; // 임시 브레이크
+            string json = string.Empty;
+            session.RecvBuffer.Read(ref json, header.messageLength);
+
+            // 여기서 복호화
+
+            object msg = JsonConvert.DeserializeObject(json);
+            
+            OnReceive.Invoke(msg);
         }
     }
 
     private void ProcessSend(SocketAsyncEventArgs e)
     {
+        Session session = (Session)e.UserToken;
+        if(e.SocketError != SocketError.Success)
+        {
+            Logger.Log(LogLevel.Warning, $"Send Failed. SocketError : {e.SocketError.ToString()}");
+            Disconnect(session.Id);
+        }
+    }
 
+    public void SendUnicast(string sessionId, object data)
+    {
+        var result = sessions.TryGetValue(sessionId, out var session);
+        if(result == false)
+        {
+            Logger.Log(LogLevel.Warning, $"Invalid session ID. [{sessionId}]");
+            return;
+        }
+
+        Packet packet = new Packet();
+        
+        NetworkHeader header = new NetworkHeader();
+        header.magicNumber = Protocol.MagicNumber;
+        
+        string json = JsonConvert.SerializeObject(data);
+
+        // 여기서 암호화
+        byte[] binary = Encoding.UTF8.GetBytes(json);
+
+        header.messageLength = binary.Length;
+        packet.Write(header);
+        packet.Write(binary);
+
+
+        SocketAsyncEventArgs args = readWritePool.Allocate();
+        args.UserToken = session;
+        args.SetBuffer(packet.Buffer, packet.Front, packet.Length);
+        bool pending = listenSocket.SendAsync(args);
+        if (!pending)
+        {
+            ProcessSend(args);
+        }
     }
 
     public void Disconnect(string sessionId)

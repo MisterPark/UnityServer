@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public class RingBuffer
 {
@@ -107,6 +108,47 @@ public class RingBuffer
         return readSize;
     }
 
+    public int Read<T>(ref T _struct)
+    {
+        int readSize = Marshal.SizeOf(typeof(T));
+        if (Length < readSize)
+        {
+            readSize = Length;
+        }
+        byte[] temp = new byte[readSize];
+        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
+        front += readSize;
+
+        IntPtr ptr = Marshal.AllocHGlobal(readSize);
+        Marshal.Copy(temp, 0, ptr, readSize);
+        T obj = (T)Marshal.PtrToStructure(ptr, typeof(T));
+        Marshal.FreeHGlobal(ptr);
+        _struct = obj;
+
+        return readSize;
+    }
+
+    public int Read(ref string buffer, int length)
+    {
+        int readSize = length;
+        if (Length < length)
+        {
+            readSize = Length;
+        }
+        byte[] temp = new byte[readSize];
+        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
+        front += readSize;
+        
+        buffer = Encoding.UTF8.GetString(temp, 0, length);
+
+        byte[] newBuffer = new byte[bufferSize];
+        System.Buffer.BlockCopy(this.buffer, front, newBuffer, 0, Length);
+        this.buffer = newBuffer;
+        rear = Length;
+        front = 0;
+        return readSize;
+    }
+
     /// <summary>
     /// 버퍼에서 데이터를 복사합니다. 내부 데이터는 유지됩니다.
     /// </summary>
@@ -132,23 +174,23 @@ public class RingBuffer
     /// <typeparam name="T"></typeparam>
     /// <param name="_struct"></param>
     /// <returns></returns>
-    public int Peek<T>(ref T _struct) where T : class
+    public int Peek<T>(ref T _struct) where T : struct
     {
-        int size = Marshal.SizeOf(typeof(T));
-        if (Length < size)
+        int readSize = Marshal.SizeOf(typeof(T));
+        if (Length < readSize)
         {
             return 0;
         }
-        byte[] temp = new byte[size];
-        System.Buffer.BlockCopy(this.buffer, front, temp, 0, size);
+        byte[] temp = new byte[readSize];
+        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
 
-        IntPtr ptr = Marshal.AllocHGlobal(size);
-        Marshal.Copy(buffer, 0, ptr, size);
+        IntPtr ptr = Marshal.AllocHGlobal(readSize);
+        Marshal.Copy(temp, 0, ptr, readSize);
         T obj = (T)Marshal.PtrToStructure(ptr, typeof(T));
         Marshal.FreeHGlobal(ptr);
         _struct = obj;
 
-        return size;
+        return readSize;
     }
 
     public void MoveFront(int bytes)
