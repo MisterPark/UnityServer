@@ -1,5 +1,4 @@
-using System.Collections;
-using System.Collections.Generic;
+using System;
 using UnityEngine;
 
 public class GameManager : MonoBehaviour
@@ -46,7 +45,7 @@ public class GameManager : MonoBehaviour
 
     public void OnReceive(object message)
     {
-
+        Type type = message.GetType();
     }
 
     public void OnChat(string message)

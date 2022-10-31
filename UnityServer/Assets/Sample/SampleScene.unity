@@ -651,6 +651,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1d760adf158a8446a534a4586b20e8b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  isLocal: 1
   port: 17777
   maxConnection: 65535
   OnReceive:

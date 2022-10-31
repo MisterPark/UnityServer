@@ -14,7 +14,15 @@ public struct NetworkHeader
 }
 
 [System.Serializable]
+public class MsgNetStat_SC
+{
+    public string id;
+    public string ipAddress;
+}
+
+[System.Serializable]
 public class MsgChat
 {
+    public string id;
     public string message;
 }

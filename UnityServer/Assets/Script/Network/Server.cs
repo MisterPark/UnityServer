@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -14,10 +15,13 @@ public class Server : MonoBehaviour
 {
     public static Server Instance { get; private set; }
 
+    [SerializeField] private bool isLocal;
     [SerializeField] private int port;
     [SerializeField] private ushort maxConnection = ushort.MaxValue;
-    [SerializeField] private UnityEvent<object> OnReceive = new UnityEvent<object> { };
+    [SerializeField] private UnityEvent<object> OnReceive;
 
+    private string publicIP;
+    private string localIP;
     private Socket listenSocket;
     private MemoryPool<SocketAsyncEventArgs> readWritePool;
     private int numConnections;
@@ -39,6 +43,9 @@ public class Server : MonoBehaviour
     }
     private void Start()
     {
+        OnReceive.AddListener(OnReceiveCallback);
+        publicIP = GetPublicIPAddress();
+        localIP = GetLocalIPAddress();
         sessions = new ConcurrentDictionary<string, Session>();
         readWritePool = new MemoryPool<SocketAsyncEventArgs>(0);
 
@@ -52,16 +59,15 @@ public class Server : MonoBehaviour
         }
 
         IPEndPoint endpoint = new IPEndPoint(IPAddress.Any, port);
+
         listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         listenSocket.Bind(endpoint);
         listenSocket.Listen(numConnections);
 
-        SocketAsyncEventArgs acceptEventArg = new SocketAsyncEventArgs();
-        acceptEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(AcceptCompleted);
 
-        StartAccept(acceptEventArg);
+        Accept();
 
-        Logger.Log(LogLevel.System, "Server Started...");
+        Logger.Log(LogLevel.System, $"Server Started... Local: {localIP}:{port} / Public: {publicIP}");
     }
 
     private void AcceptCompleted(object sender, SocketAsyncEventArgs e)
@@ -69,42 +75,48 @@ public class Server : MonoBehaviour
         ProcessAccept(e);
     }
 
-    private void StartAccept(SocketAsyncEventArgs e)
+    private void Accept()
     {
-        bool pending = listenSocket.AcceptAsync(e);
+        SocketAsyncEventArgs acceptEventArg = new SocketAsyncEventArgs();
+        acceptEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(AcceptCompleted);
+
+        bool pending = listenSocket.AcceptAsync(acceptEventArg);
         if (!pending)
         {
-            ProcessAccept(e);
+            ProcessAccept(acceptEventArg);
         }
     }
 
     private void ProcessAccept(SocketAsyncEventArgs e)
     {
-        Interlocked.Increment(ref numConnections);
-
-        SocketAsyncEventArgs readEventArgs = readWritePool.Allocate();
-
-        Session session = new Session();
-        session.Socket = e.AcceptSocket;
-        session.Id = Guid.NewGuid().ToString();
-        session.IPAddress = ((IPEndPoint)e.RemoteEndPoint).Address.ToString();
-
-        sessions.TryAdd(session.Id, session);
-
-        readEventArgs.UserToken = session;
-
-        readEventArgs.SetBuffer(session.RecvBuffer.Buffer, session.RecvBuffer.Rear, session.RecvBuffer.WritableLength);
-
-        Logger.Log(LogLevel.System, $"[{session.IPAddress}] is connected. Number of currently connected clients : {numConnections}");
-
-
-        bool pending = e.AcceptSocket.ReceiveAsync(readEventArgs);
-        if (!pending)
+        if (e.SocketError == SocketError.Success)
         {
-            ProcessReceive(readEventArgs);
+            Interlocked.Increment(ref numConnections);
+            SocketAsyncEventArgs readEventArgs = readWritePool.Allocate();
+            Session session = new Session();
+            session.Socket = e.AcceptSocket;
+            session.Id = Guid.NewGuid().ToString();
+            session.IPAddress = e.AcceptSocket.LocalEndPoint.ToString();
+            
+            sessions.TryAdd(session.Id, session);
+            readEventArgs.UserToken = session;
+            readEventArgs.SetBuffer(session.RecvBuffer.Buffer, session.RecvBuffer.Rear, session.RecvBuffer.WritableLength);
+
+            bool pending = e.AcceptSocket.ReceiveAsync(readEventArgs);
+            if (!pending)
+            {
+                ProcessReceive(readEventArgs);
+            }
+
+            SendUnicast(session.Id, new MsgNetStat_SC() {id = session.Id });
+
+            Accept();
+        }
+        else
+        {
+            Logger.Log(LogLevel.Error, $"Socket Error at ProcessAccept(). Code: {e.SocketError}");
         }
 
-        StartAccept(e);
     }
 
     private void IO_Completed(object sender, SocketAsyncEventArgs e)
@@ -183,28 +195,42 @@ public class Server : MonoBehaviour
             // 여기서 패킷처리
             session.RecvBuffer.MoveFront(headerLength);
 
+            int classLength = 0;
+            session.RecvBuffer.Read(ref classLength);
+
+            string className = string.Empty;
+            session.RecvBuffer.Read(ref className, classLength);
+
             string json = string.Empty;
             session.RecvBuffer.Read(ref json, header.messageLength);
 
-            // 여기서 복호화
-
-            object msg = JsonConvert.DeserializeObject(json);
-            if(msg != null)
+            Type msgType = Type.GetType(className);
+            if (msgType == null)
             {
                 // 존재하지 않는 구조체 이슈 (프로토콜 버전 차이 가능성)
-                Logger.Log(LogLevel.Error, $"Invalid message. Id: {session.Id}");
+                Logger.Log(LogLevel.Error, $"Invalid message.");
                 Disconnect(session.Id);
                 break;
             }
-            
-            OnReceive?.Invoke(msg);
+
+            object msg = JsonConvert.DeserializeObject(json, msgType);
+            if (msg == null)
+            {
+                // 존재하지 않는 구조체 이슈 (프로토콜 버전 차이 가능성)
+                Logger.Log(LogLevel.Error, $"Invalid message.");
+                Disconnect(session.Id);
+                break;
+            }
+
+            OnReceiveCallback(msg);
+            OnReceive.Invoke(msg);
         }
     }
 
     private void ProcessSend(SocketAsyncEventArgs e)
     {
         Session session = (Session)e.UserToken;
-        if(e.SocketError != SocketError.Success)
+        if (e.SocketError != SocketError.Success)
         {
             Logger.Log(LogLevel.Warning, $"Send Failed. SocketError : {e.SocketError}");
             Disconnect(session.Id);
@@ -214,17 +240,18 @@ public class Server : MonoBehaviour
     public void SendUnicast(string sessionId, object data)
     {
         var result = sessions.TryGetValue(sessionId, out var session);
-        if(result == false)
+        if (result == false)
         {
             Logger.Log(LogLevel.Warning, $"Invalid session ID. [{sessionId}]");
             return;
         }
 
         Packet packet = new Packet();
-        
+
         NetworkHeader header = new NetworkHeader();
         header.magicNumber = Protocol.MagicNumber;
-        
+
+        string className = data.GetType().Name;
         string json = JsonConvert.SerializeObject(data);
 
         // 여기서 암호화
@@ -232,13 +259,13 @@ public class Server : MonoBehaviour
 
         header.messageLength = binary.Length;
         packet.Write(header);
+        packet.Write(className);
         packet.Write(binary);
-
 
         SocketAsyncEventArgs args = readWritePool.Allocate();
         args.UserToken = session;
         args.SetBuffer(packet.Buffer, packet.Front, packet.Length);
-        bool pending = listenSocket.SendAsync(args);
+        bool pending = session.Socket.SendAsync(args);
         if (!pending)
         {
             ProcessSend(args);
@@ -257,6 +284,7 @@ public class Server : MonoBehaviour
             }
             finally
             {
+                Interlocked.Decrement(ref numConnections);
                 Logger.Log($"Session Disconnected. / ID: {session.Id}/ IP Address: {session.IPAddress}");
                 session.Socket.Close();
                 session.Socket.Dispose();
@@ -270,6 +298,55 @@ public class Server : MonoBehaviour
         foreach (Session session in sessions.Values)
         {
             Disconnect(session.Id);
+        }
+    }
+
+    private string GetPublicIPAddress()
+    {
+        var request = (HttpWebRequest)WebRequest.Create("http://ifconfig.me");
+
+        request.UserAgent = "curl"; // this will tell the server to return the information as if the request was made by the linux "curl" command
+
+        string publicIPAddress;
+
+        request.Method = "GET";
+        using (WebResponse response = request.GetResponse())
+        {
+            using (var reader = new StreamReader(response.GetResponseStream()))
+            {
+                publicIPAddress = reader.ReadToEnd();
+            }
+        }
+
+        return publicIPAddress.Replace("\n", "");
+    }
+
+    private string GetLocalIPAddress()
+    {
+        string localIP;
+        using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0))
+        {
+            socket.Connect("8.8.8.8", 65530);
+            IPEndPoint endPoint = socket.LocalEndPoint as IPEndPoint;
+            localIP = endPoint.Address.ToString();
+        }
+        return localIP;
+    }
+
+    private void OnReceiveCallback(object msg)
+    {
+        if (msg.GetType() == typeof(MsgNetStat_SC))
+        {
+            MsgNetStat_SC obj = (MsgNetStat_SC)msg;
+
+            if (sessions.TryGetValue(obj.id, out Session session) == false)
+            {
+                Logger.Log("Invalid session ID.");
+                return;
+            }
+
+            session.IPAddress = obj.ipAddress;
+            Logger.Log(LogLevel.System, $"Connected. IP Address: [{session.IPAddress}] / Session ID: [{obj.id}] / Number of Clients: {numConnections}");
         }
     }
 }
