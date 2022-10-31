@@ -16,6 +16,7 @@ public class Server : MonoBehaviour
 
     [SerializeField] private int port;
     [SerializeField] private ushort maxConnection = ushort.MaxValue;
+    [SerializeField] private UnityEvent<object> OnReceive = new UnityEvent<object> { };
 
     private Socket listenSocket;
     private MemoryPool<SocketAsyncEventArgs> readWritePool;
@@ -23,7 +24,6 @@ public class Server : MonoBehaviour
 
     private ConcurrentDictionary<string, Session> sessions;
 
-    public UnityEvent<object> OnReceive { get; private set; } = new UnityEvent<object> { };
 
     private void Awake()
     {
@@ -189,8 +189,15 @@ public class Server : MonoBehaviour
             // 여기서 복호화
 
             object msg = JsonConvert.DeserializeObject(json);
+            if(msg != null)
+            {
+                // 존재하지 않는 구조체 이슈 (프로토콜 버전 차이 가능성)
+                Logger.Log(LogLevel.Error, $"Invalid message. Id: {session.Id}");
+                Disconnect(session.Id);
+                break;
+            }
             
-            OnReceive.Invoke(msg);
+            OnReceive?.Invoke(msg);
         }
     }
 
@@ -199,7 +206,7 @@ public class Server : MonoBehaviour
         Session session = (Session)e.UserToken;
         if(e.SocketError != SocketError.Success)
         {
-            Logger.Log(LogLevel.Warning, $"Send Failed. SocketError : {e.SocketError.ToString()}");
+            Logger.Log(LogLevel.Warning, $"Send Failed. SocketError : {e.SocketError}");
             Disconnect(session.Id);
         }
     }

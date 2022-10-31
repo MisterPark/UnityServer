@@ -16,5 +16,5 @@ public struct NetworkHeader
 [System.Serializable]
 public class MsgChat
 {
-    string message;
+    public string message;
 }
