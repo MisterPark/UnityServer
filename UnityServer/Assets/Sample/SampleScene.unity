@@ -651,24 +651,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1d760adf158a8446a534a4586b20e8b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  isLocal: 1
   port: 17777
-  maxConnection: 65535
-  OnReceive:
-    m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 11400000, guid: 6a87fc9fd4647414abbff1c742f2c182, type: 2}
-        m_TargetAssemblyTypeName: GameEvent`1[[System.Object, mscorlib
-        m_MethodName: Invoke
-        m_Mode: 0
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+  maxConnection: 5000
+  receiveBufferSize: 1024
+  packetPoolSize: 1000
+  OnAccept: {fileID: 11400000, guid: 4b71db8782fc5664aafc6a48915f0a2d, type: 2}
+  OnReceive: {fileID: 11400000, guid: 6a87fc9fd4647414abbff1c742f2c182, type: 2}
 --- !u!4 &1226006648
 Transform:
   m_ObjectHideFlags: 0

@@ -24,7 +24,7 @@ public class Packet
     public Packet()
     {
         this.bufferSize = DEFAULT_SIZE;
-        Buffer = new byte[this.bufferSize];
+        Buffer = new byte[bufferSize];
         front = 0;
         rear = 0;
     }
@@ -32,9 +32,38 @@ public class Packet
     public Packet(int bufferSize)
     {
         this.bufferSize = bufferSize;
-        Buffer = new byte[this.bufferSize];
+        Buffer = new byte[bufferSize];
         front = 0;
         rear = 0;
+    }
+
+    public void Initialize()
+    {
+        front = 0;
+        rear = 0;
+    }
+
+    public void SetHeader()
+    {
+        NetHeader header;
+        header.Code = CODE;
+        header.Length = Length;
+
+        // HACK : 야매코드 (Header가 바뀌면 바뀌어야하는 코드
+        if (WritableLength < 8)
+        {
+            Resize(bufferSize + 8);
+        }
+
+        int originRear = rear;
+        byte[] temp = new byte[bufferSize];
+        System.Buffer.BlockCopy(Buffer, front, temp, 8, Length);
+        Buffer = temp;
+        front = 0;
+        rear = 0;
+        Write(header.Code);
+        Write(header.Length);
+        rear += originRear;
     }
 
     public void Resize(int newSize)
@@ -43,7 +72,12 @@ public class Packet
         {
             throw new Exception("newSize 는 0보다 작을 수 없습니다.");
         }
-        int copySize = (newSize < Length) ? newSize : Length;
+
+        if (newSize <= bufferSize)
+        {
+            throw new Exception("newSize 는 기존 크기보다 작을 수 없습니다.");
+        }
+        int copySize = Length;
         byte[] newBuffer = new byte[newSize];
         System.Buffer.BlockCopy(Buffer, front, newBuffer, 0, copySize);
         Buffer = newBuffer;
@@ -78,35 +112,6 @@ public class Packet
         byte[] binary = Encoding.UTF8.GetBytes(value);
         Write(binary.Length);
         if (WritableLength < binary.Length)
-        {
-            Resize(bufferSize + binary.Length);
-        }
-
-        System.Buffer.BlockCopy(binary, 0, Buffer, rear, binary.Length);
-        rear += binary.Length;
-    }
-
-    public void Write(byte[] value)
-    {
-        if (WritableLength < value.Length)
-        {
-            Resize(bufferSize + value.Length);
-        }
-        System.Buffer.BlockCopy(value, 0, Buffer, rear, value.Length);
-        rear += value.Length;
-    }
-
-    public void Write<T>(T value) where T : struct
-    {
-        int size = Marshal.SizeOf(typeof(T));
-        byte[] binary = new byte[size];
-
-        IntPtr ptr = Marshal.AllocHGlobal(size);
-        Marshal.StructureToPtr(value, ptr, false);
-        Marshal.Copy(ptr, binary, 0, size);
-        Marshal.FreeHGlobal(ptr);
-
-        if(WritableLength < binary.Length)
         {
             Resize(bufferSize + binary.Length);
         }

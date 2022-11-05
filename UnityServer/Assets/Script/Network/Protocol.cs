@@ -13,14 +13,13 @@ public struct NetworkHeader
     public int messageLength;
 }
 
-[System.Serializable]
-public class MsgNetStat_SC
+public class MsgNetStat
 {
     public string id;
     public string ipAddress;
+    public int ping;
 }
 
-[System.Serializable]
 public class MsgChat
 {
     public string id;

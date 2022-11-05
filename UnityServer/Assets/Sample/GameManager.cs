@@ -46,6 +46,12 @@ public class GameManager : MonoBehaviour
     public void OnReceive(object message)
     {
         Type type = message.GetType();
+        if(type == typeof(MsgChat))
+        {
+            MsgChat msg = (MsgChat)message;
+            onChatEvent.Invoke(msg.message);
+            Server.Instance.SendBroadcast(msg);
+        }
     }
 
     public void OnChat(string message)

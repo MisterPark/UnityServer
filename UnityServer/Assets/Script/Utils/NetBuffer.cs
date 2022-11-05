@@ -1,8 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
-public class RingBuffer
+public class NetBuffer
 {
     const int DEFAULT_SIZE = 1024;
     byte[] buffer;
@@ -16,7 +15,7 @@ public class RingBuffer
     public int Length { get { return rear - front; } }
     public int WritableLength { get { return bufferSize - rear; } }
 
-    public RingBuffer()
+    public NetBuffer()
     {
         this.bufferSize = DEFAULT_SIZE;
         buffer = new byte[this.bufferSize];
@@ -24,7 +23,7 @@ public class RingBuffer
         rear = 0;
     }
 
-    public RingBuffer(int bufferSize)
+    public NetBuffer(int bufferSize)
     {
         this.bufferSize = bufferSize;
         buffer = new byte[this.bufferSize];
@@ -47,10 +46,17 @@ public class RingBuffer
     {
         if (newSize <= 0)
         {
-            throw new Exception("newSize 는 0보다 작을 수 없습니다.");
+            UnityEngine.Debug.Log("newSize 는 0보다 작을 수 없습니다.");
+            return;
         }
 
-        int copySize = (newSize < Length) ? newSize : Length;
+        if (newSize <= bufferSize)
+        {
+            UnityEngine.Debug.Log("newSize 는 기존 크기보다 작을 수 없습니다.");
+            return;
+        }
+
+        int copySize = Length;
         byte[] newBuffer = new byte[newSize];
         System.Buffer.BlockCopy(buffer, front, newBuffer, 0, copySize);
         buffer = newBuffer;
@@ -108,47 +114,6 @@ public class RingBuffer
         return readSize;
     }
 
-    public int Read<T>(ref T _struct)
-    {
-        int readSize = Marshal.SizeOf(typeof(T));
-        if (Length < readSize)
-        {
-            readSize = Length;
-        }
-        byte[] temp = new byte[readSize];
-        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
-        front += readSize;
-
-        IntPtr ptr = Marshal.AllocHGlobal(readSize);
-        Marshal.Copy(temp, 0, ptr, readSize);
-        T obj = (T)Marshal.PtrToStructure(ptr, typeof(T));
-        Marshal.FreeHGlobal(ptr);
-        _struct = obj;
-
-        return readSize;
-    }
-
-    public int Read(ref string buffer, int length)
-    {
-        int readSize = length;
-        if (Length < length)
-        {
-            readSize = Length;
-        }
-        byte[] temp = new byte[readSize];
-        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
-        front += readSize;
-        
-        buffer = Encoding.UTF8.GetString(temp, 0, length);
-
-        byte[] newBuffer = new byte[bufferSize];
-        System.Buffer.BlockCopy(this.buffer, front, newBuffer, 0, Length);
-        this.buffer = newBuffer;
-        rear = Length;
-        front = 0;
-        return readSize;
-    }
-
     /// <summary>
     /// 버퍼에서 데이터를 복사합니다. 내부 데이터는 유지됩니다.
     /// </summary>
@@ -176,21 +141,21 @@ public class RingBuffer
     /// <returns></returns>
     public int Peek<T>(ref T _struct) where T : struct
     {
-        int readSize = Marshal.SizeOf(typeof(T));
-        if (Length < readSize)
+        int size = Marshal.SizeOf(typeof(T));
+        if (Length < size)
         {
             return 0;
         }
-        byte[] temp = new byte[readSize];
-        System.Buffer.BlockCopy(this.buffer, front, temp, 0, readSize);
+        byte[] temp = new byte[size];
+        System.Buffer.BlockCopy(this.buffer, front, temp, 0, size);
 
-        IntPtr ptr = Marshal.AllocHGlobal(readSize);
-        Marshal.Copy(temp, 0, ptr, readSize);
+        IntPtr ptr = Marshal.AllocHGlobal(size);
+        Marshal.Copy(buffer, 0, ptr, size);
         T obj = (T)Marshal.PtrToStructure(ptr, typeof(T));
         Marshal.FreeHGlobal(ptr);
         _struct = obj;
 
-        return readSize;
+        return size;
     }
 
     public void MoveFront(int bytes)
